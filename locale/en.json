@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Computer Use Approval Gate",
+    "description": "Controls whether every desktop write action needs your approval first. Enabled: the agent must ask you before each click, keystroke, or drag. Disabled: write actions run without confirmation."
+  }
+}

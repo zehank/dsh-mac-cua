@@ -21,6 +21,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { sky, preflight, isTrusted } = require('../lib/sky.js');
 
+// Write actions: methods that change system state and therefore require user
+// approval when the confirmation gate is on. Read methods (get_app_state,
+// list_apps, get_screenshot) are never gated.
+const WRITE_METHODS = new Set([
+  'click', 'drag', 'scroll', 'press_key', 'type_text', 'paste',
+  'set_value', 'select_text', 'perform_secondary_action',
+]);
+
 const MAX_CAPTURED_CHARS = 200000;
 
 class PersistentRepl {
@@ -29,6 +37,8 @@ class PersistentRepl {
     this.emittedImages = [];
     this.captured = [];
     this.resetCount = 0;
+    this._approveGateEnabled = true;  // confirmation required by default
+    this._approveGatePassed = false;  // per-call approval, set before evaluate
     this._buildContext();
   }
 
@@ -78,8 +88,29 @@ class PersistentRepl {
       },
     };
 
+    // Wrap the write methods so that, when the gate is enabled and the current
+    // call has not been approved, any state-changing action throws instead of
+    // running. Read methods are passed through untouched.
+    const gatedSky = Object.create(null);
+    for (const key of Object.keys(sky)) {
+      if (WRITE_METHODS.has(key)) {
+        const orig = sky[key];
+        gatedSky[key] = async (...args) => {
+          if (self._approveGateEnabled && !self._approveGatePassed) {
+            throw new Error(
+              `APPROVAL_REQUIRED: "sky.${key}(...)" is a write action and the confirmation gate is ON. ` +
+              'Ask the user for approval (ask_user_question), then retry this exact js call with "approve": true.'
+            );
+          }
+          return orig.apply(sky, args);
+        };
+      } else {
+        gatedSky[key] = sky[key];
+      }
+    }
+
     const sandbox = {
-      sky,
+      sky: gatedSky,
       nodeRepl,
       console: {
         log: (...args) => {
@@ -470,12 +501,21 @@ class PersistentRepl {
     };
   }
 
+  /**
+   * Set the approval gate for the upcoming evaluation.
+   * @param {boolean} enabled  Whether write actions require approval.
+   * @param {boolean} approved Whether the current call has been approved.
+   */
+  setApprovalGate(enabled, approved) {
+    this._approveGateEnabled = !!enabled;
+    this._approveGatePassed = !!approved;
+  }
+
   /** Discard all state and rebuild a clean context. */
   reset() {
     this._buildContext();
     this.resetCount += 1;
-    // Re-inject the API so a reset context is immediately usable.
-    this.context.sky = sky;
+    // The rebuilt context already carries the gated `sky`; nothing to re-inject.
     return { resetCount: this.resetCount };
   }
 }

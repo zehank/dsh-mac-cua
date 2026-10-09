@@ -19,6 +19,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { PersistentRepl, preflight } = require('./repl.js');
 
@@ -35,6 +36,67 @@ const SERVER_NAME = 'dsh-cua';
 const SERVER_VERSION = require('../package.json').version;
 
 const repl = new PersistentRepl();
+
+// --- Confirmation gate settings -------------------------------------------
+// The gate follows the `cua-approval-gate` component's enable/disable switch in the
+// settings UI (插件 -> cua -> 组件 -> 开关). Toggling it writes `disabled` to the
+// profile's patch layer:
+//   - disabled: false (enabled)  -> gate ON  (confirm before each write)
+//   - disabled: true  (disabled) -> gate OFF (no confirmation)
+// Re-read on every call so a change takes effect without restarting the harness.
+const PROFILE_PATCH_PATH =
+  process.env.DSH_CUA_PROFILE_PATCH || path.resolve(__dirname, '..', '..', '..', 'cordis.patch.yml');
+
+/** Read the `disabled` flag of the `cua-approval-gate` entry; null when not present. */
+function readComponentDisabled() {
+  try {
+    const text = fs.readFileSync(PROFILE_PATCH_PATH, 'utf8');
+    const start = text.indexOf('- id: cua-approval-gate');
+    if (start < 0) return null;
+    // Bound the search to this entry so a later entry's field cannot match.
+    const rest = text.slice(start + 1);
+    const next = rest.search(/\n- /);
+    const chunk = next < 0 ? rest : rest.slice(0, next);
+    const m = chunk.match(/\bdisabled\s*:\s*(true|false)\b/);
+    return m ? m[1] === 'true' : null;
+  } catch {
+    return null;
+  }
+}
+
+function readApprovalEnabled() {
+  // enabled (absent or disabled:false) -> gate on; disabled -> gate off.
+  return readComponentDisabled() !== true;
+}
+
+function writeApprovalEnabled(enabled) {
+  // Toggling the gate = toggling the component's `disabled` flag. The settings
+  // UI reads this same patch entry, so the switch stays in sync.
+  const value = enabled ? 'false' : 'true'; // gate on -> component enabled
+  try {
+    let text = fs.readFileSync(PROFILE_PATCH_PATH, 'utf8');
+    const start = text.indexOf('- id: cua-approval-gate');
+    if (start < 0) {
+      text = text.replace(/\s*$/, '\n- id: cua-approval-gate\n  disabled: ' + value + '\n');
+    } else {
+      const lineStart = text.lastIndexOf('\n', start) + 1;
+      const rest = text.slice(start + 1);
+      const next = rest.search(/\n- /);
+      const end = start + 1 + (next < 0 ? rest.length : next);
+      let entry = text.slice(lineStart, end);
+      if (/\bdisabled\s*:/.test(entry)) {
+        entry = entry.replace(/\bdisabled\s*:\s*(true|false)\b/, 'disabled: ' + value);
+      } else {
+        entry = entry.replace(/(- id: cua-approval-gate\s*\n)/, '$1  disabled: ' + value + '\n');
+      }
+      text = text.slice(0, lineStart) + entry + text.slice(end);
+    }
+    fs.writeFileSync(PROFILE_PATCH_PATH, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Logs must never touch stdout — that channel carries protocol frames.
 function log(message) {
@@ -97,8 +159,33 @@ const TOOLS = [
           type: 'string',
           description: 'JavaScript to evaluate in the persistent REPL.',
         },
+        approve: {
+          type: 'boolean',
+          description:
+            'Set true only after the user has approved a blocked write action ' +
+            '(click/type/key/drag/paste/scroll/set_value/select_text/perform_secondary_action) ' +
+            'via ask_user_question. Without it, write actions throw APPROVAL_REQUIRED when the gate is on.',
+        },
       },
       required: ['code'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'approval_mode',
+    description:
+      'Read or change the computer-use confirmation gate. When ON, the agent must ask ' +
+      'the user for approval before every write action (click, type, key, drag, paste, ' +
+      'scroll, set_value, select_text, perform_secondary_action). When OFF, write actions ' +
+      'run without confirmation. The setting is persisted to disk.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: {
+          type: 'boolean',
+          description: 'Omit to read the current state. Pass true/false to change it (persisted).',
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -128,6 +215,9 @@ function sendError(id, code, message) {
 async function callTool(name, args) {
   if (name === 'js') {
     const code = args && typeof args.code === 'string' ? args.code : '';
+    // Apply the gate before evaluating: read the current toggle, then mark the
+    // call approved only when the agent explicitly passes approve: true.
+    repl.setApprovalGate(readApprovalEnabled(), !!(args && args.approve === true));
     const result = await repl.evaluate(code);
     if (!result.ok) {
       return { content: [{ type: 'text', text: result.error }], isError: true };
@@ -141,6 +231,22 @@ async function callTool(name, args) {
       content.push({ type: 'image', data: fs.readFileSync(img.url.replace('file://', '')).toString('base64'), mimeType: img.mimeType });
     }
     return { content };
+  }
+
+  if (name === 'approval_mode') {
+    const value = args && args.enabled;
+    if (value === true || value === false) {
+      const persisted = writeApprovalEnabled(value);
+      const now = readApprovalEnabled();
+      return { content: [{ type: 'text', text:
+        `电脑操作确认已${now ? '开启' : '关闭'}（${persisted ? '已持久化' : '仅本次生效，写入失败'}）。`
+      }] };
+    }
+    const now = readApprovalEnabled();
+    return { content: [{ type: 'text', text:
+      `当前电脑操作确认：${now ? '开启' : '关闭'}。` +
+      (now ? '每次写操作前会要求授权。' : '写操作直接执行，无需授权。')
+    }] };
   }
 
   if (name === 'js_reset') {

@@ -27,6 +27,7 @@
   "files": [
     "lib/",
     "cua-repl/",
+    "locale/",
     "instructions/",
     "scripts/",
     "native/build.sh",

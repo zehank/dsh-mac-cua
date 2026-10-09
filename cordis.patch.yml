@@ -36,3 +36,10 @@
         cwd: '.'
         toolCallTimeoutMs: 180000
         failOnStartupError: false
+    # Approval gate. Referenced by its bare package subpath (not a relative
+    # path) so the Host can read display metadata: readPluginMeta() only runs
+    # for bare specifiers, and a relative './lib/...' entry would otherwise show
+    # the raw file URL as its card title in Settings.
+    - id: cua-approval-gate
+      name: 'dsh-mac-cua/lib/approval-gate.js'
+      config: {}
