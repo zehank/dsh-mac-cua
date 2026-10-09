@@ -36,10 +36,15 @@
         cwd: '.'
         toolCallTimeoutMs: 180000
         failOnStartupError: false
-    # Approval gate. Referenced by its bare package subpath (not a relative
-    # path) so the Host can read display metadata: readPluginMeta() only runs
-    # for bare specifiers, and a relative './lib/...' entry would otherwise show
-    # the raw file URL as its card title in Settings.
+    # Approval gate. Its enable/disable switch in Settings IS the computer-use
+    # confirmation gate: the component owns no config and reads nothing, it
+    # exists only so the switch is rendered.
+    #
+    # Keep the RELATIVE specifier. A bare package subpath
+    # (`dsh-mac-cua/lib/approval-gate.js`) resolves fine under plain Node and is
+    # what readPluginMeta() would need to pick up locale/ card metadata, but it
+    # is not verified against the DSH loader's own resolution — and a loader
+    # failure here takes the whole insert list down with it, including mcp-cua.
     - id: cua-approval-gate
-      name: 'dsh-mac-cua/lib/approval-gate.js'
+      name: './lib/approval-gate.js'
       config: {}

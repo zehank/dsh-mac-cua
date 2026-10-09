@@ -17,8 +17,8 @@ rather than from a config file.
 | `cua-repl/repl.js` | Wraps every `sky` write method in a gate. When the gate is on and the call was not explicitly approved, it throws `APPROVAL_REQUIRED` instead of acting. `js_reset` no longer re-injects the un-gated `sky`. |
 | `cua-repl/server.js` | The `js` tool gains an `approve` boolean; a new `approval_mode` tool reads/toggles the gate. The gate state is read from the profile's `cordis.patch.yml` on every call, so a change takes effect without restarting the harness. |
 | `lib/approval-gate.js` | **New.** A minimal cordis `Service` that exists only so Settings renders an enable/disable switch for it. That switch state *is* the gate. |
-| `locale/en.json`, `locale/zh.json` | **New.** Card title and description shown in Settings. |
-| `cordis.patch.yml` | Mounts the gate component by its **bare package subpath** (`dsh-mac-cua/lib/approval-gate.js`), not a relative path — the Host only reads display metadata for bare specifiers. |
+| `locale/en.json`, `locale/zh.json` | **New.** Intended Settings card title/description ("Computer Use Approval Gate"). Currently NOT read — see caveats. |
+| `cordis.patch.yml` | Mounts the gate component as `./lib/approval-gate.js`. A bare package subpath would let `readPluginMeta()` pick up `locale/`, but that is unverified against the DSH loader, and a loader failure here takes the whole insert list down with it — including `mcp-cua`. |
 | `package.json` | Ships the new `locale/` directory. |
 | `scripts/launch-node.sh` | **New.** Machine-local wrapper; see caveats. |
 
@@ -37,6 +37,9 @@ rather than from a config file.
 
 ## Caveats
 
+- The Settings card falls back to showing the module path rather than `locale/`'s
+  "Computer Use Approval Gate", because `readPluginMeta()` only reads locale metadata
+  for **bare package specifiers** and the entry uses a relative path (see the table).
 - `scripts/launch-node.sh` hardcodes the macOS app path
   (`/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness`). It exists
   because DSH's mcp-client scrubs every `DSH_*` variable from the spawned process, so
